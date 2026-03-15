@@ -3,12 +3,14 @@
  *
  * 两种启动方式：
  *
- * 方式 1（推荐）：先手动启动 Chrome，再运行 demo
- *   chrome --remote-debugging-port=9222 --user-data-dir="~/.gemini-skill/chrome-data"
+ * 方式 1（推荐）：先手动启动浏览器，再运行 demo
+ *   chrome --remote-debugging-port=9222 --user-data-dir="~/.gemini-skill/browser-data"
+ *   （也可以用 Edge：msedge --remote-debugging-port=9222 --user-data-dir=...）
  *   node src/demo.js
  *
- * 方式 2：通过环境变量让 skill 自动启动 Chrome
- *   CHROME_PATH="C:/Program Files/Google/Chrome/Application/chrome.exe" node src/demo.js
+ * 方式 2：让 skill 自动检测并启动浏览器
+ *   node src/demo.js
+ *   （或指定路径：BROWSER_PATH="C:/..." node src/demo.js）
  *
  * 所有配置项见 .env，可直接编辑或通过命令行设环境变量。
  */

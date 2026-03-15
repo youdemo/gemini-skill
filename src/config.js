@@ -38,23 +38,23 @@ function envStr(key, fallback) {
 // ── 导出配置 ──
 
 const config = {
-  /** Chrome / Chromium 可执行文件路径（不设则需手动启动 Chrome） */
-  chromePath: envStr('CHROME_PATH', undefined),
+  /** 浏览器可执行文件路径，支持 Chrome / Edge / Chromium（不设则自动检测） */
+  browserPath: envStr('BROWSER_PATH', undefined),
 
   /** CDP 远程调试端口 */
-  chromeDebugPort: envInt('CHROME_DEBUG_PORT', 9222),
+  browserDebugPort: envInt('BROWSER_DEBUG_PORT', 9222),
 
-  /** Chrome 用户数据目录 */
-  chromeUserDataDir: envStr(
-    'CHROME_USER_DATA_DIR',
-    join(homedir(), '.gemini-skill', 'chrome-data'),
+  /** 浏览器用户数据目录 */
+  browserUserDataDir: envStr(
+    'BROWSER_USER_DATA_DIR',
+    join(homedir(), '.gemini-skill', 'browser-data'),
   ),
 
   /** 是否无头模式 */
-  chromeHeadless: envBool('CHROME_HEADLESS', false),
+  browserHeadless: envBool('BROWSER_HEADLESS', false),
 
   /** CDP 协议超时时间（ms） */
-  chromeProtocolTimeout: envInt('CHROME_PROTOCOL_TIMEOUT', 60_000),
+  browserProtocolTimeout: envInt('BROWSER_PROTOCOL_TIMEOUT', 60_000),
 
   /** 截图 / 图片输出目录 */
   outputDir: envStr('OUTPUT_DIR', resolve('output')),

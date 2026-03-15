@@ -26,10 +26,10 @@ export { disconnect, close };
  * 所有参数均可通过环境变量配置（见 .env），opts 传参优先级更高。
  *
  * @param {object} [opts]
- * @param {string} [opts.executablePath] - Chrome 路径（env: CHROME_PATH）
- * @param {number} [opts.port] - 调试端口（env: CHROME_DEBUG_PORT，默认 9222）
- * @param {string} [opts.userDataDir] - 用户数据目录（env: CHROME_USER_DATA_DIR）
- * @param {boolean} [opts.headless] - 无头模式（env: CHROME_HEADLESS，默认 false）
+ * @param {string} [opts.executablePath] - 浏览器路径（env: BROWSER_PATH，不设则自动检测）
+ * @param {number} [opts.port] - 调试端口（env: BROWSER_DEBUG_PORT，默认 9222）
+ * @param {string} [opts.userDataDir] - 用户数据目录（env: BROWSER_USER_DATA_DIR）
+ * @param {boolean} [opts.headless] - 无头模式（env: BROWSER_HEADLESS，默认 false）
  * @returns {Promise<{ops: ReturnType<typeof createOps>, page: import('puppeteer-core').Page, browser: import('puppeteer-core').Browser}>}
  */
 export async function createGeminiSession(opts = {}) {

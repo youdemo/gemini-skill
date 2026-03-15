@@ -2,12 +2,13 @@
  * browser.js — 浏览器生命周期管理（内部模块，不对外暴露）
  *
  * 设计思路：
- *   Skill 内部自己管理 Chrome 进程，对外只暴露 getSession()。
+ *   Skill 内部自己管理浏览器进程，对外只暴露 ensureBrowser()。
  *   调用方不需要关心 launch/connect/端口/CDP 等细节。
+ *   支持 Chrome / Edge / Chromium 等所有基于 Chromium 的浏览器。
  *
  * 流程：
- *   1. 先检查指定端口是否已有 Chrome 在跑 → 有就 connect
- *   2. 没有 → 启动新 Chrome（需要 executablePath）
+ *   1. 先检查指定端口是否已有浏览器在跑 → 有就 connect
+ *   2. 没有 → 自动检测或使用配置的浏览器路径启动
  *   3. 找到 / 新开 Gemini 标签页
  *   4. 返回 { browser, page }
  */
@@ -15,6 +16,8 @@ import puppeteerCore from 'puppeteer-core';
 import { addExtra } from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { createConnection } from 'node:net';
+import { existsSync } from 'node:fs';
+import { platform } from 'node:os';
 import config from './config.js';
 
 // ── 用 puppeteer-extra 包装 puppeteer-core，注入 stealth 插件 ──
@@ -24,8 +27,72 @@ puppeteer.use(StealthPlugin());
 // ── 模块级单例：跨调用复用同一个浏览器 ──
 let _browser = null;
 
+// ── 各平台浏览器候选路径（Chrome、Edge、Chromium）──
+const BROWSER_CANDIDATES = {
+  win32: [
+    // Chrome
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    // Edge
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    // Chromium
+    'C:\\Program Files\\Chromium\\Application\\chrome.exe',
+  ],
+  darwin: [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  ],
+  linux: [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/microsoft-edge',
+    '/usr/bin/microsoft-edge-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+  ],
+};
+
 /**
- * 探测指定端口是否有 Chrome 在监听
+ * 自动检测系统上可用的 Chromium 系浏览器
+ * @returns {string | undefined} 找到的浏览器可执行文件路径
+ */
+function detectBrowser() {
+  // 还可以检查用户通过环境变量传入的常用别名
+  const envPaths = [
+    process.env.PROGRAMFILES,
+    process.env['PROGRAMFILES(X86)'],
+    process.env.LOCALAPPDATA,
+  ];
+
+  const os = platform();
+  const candidates = BROWSER_CANDIDATES[os] || [];
+
+  // Windows 额外：从环境变量目录组合路径
+  if (os === 'win32') {
+    for (const base of envPaths) {
+      if (!base) continue;
+      candidates.push(
+        `${base}\\Google\\Chrome\\Application\\chrome.exe`,
+        `${base}\\Microsoft\\Edge\\Application\\msedge.exe`,
+      );
+    }
+  }
+
+  for (const p of candidates) {
+    if (existsSync(p)) {
+      console.log('[browser] auto-detected:', p);
+      return p;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * 探测指定端口是否有浏览器在监听
  * @param {number} port
  * @param {string} [host='127.0.0.1']
  * @param {number} [timeout=1500]
@@ -50,8 +117,8 @@ function isPortAlive(port, host = '127.0.0.1', timeout = 1500) {
   });
 }
 
-/** Chrome 启动参数 */
-const CHROME_ARGS = [
+/** 浏览器启动参数（适用于所有 Chromium 系浏览器） */
+const BROWSER_ARGS = [
   // ── 基础 ──
   '--no-first-run',
   '--disable-default-apps',
@@ -81,23 +148,23 @@ const CHROME_ARGS = [
 ];
 
 /**
- * 连接到已运行的 Chrome
+ * 连接到已运行的浏览器
  * @param {number} port
  * @returns {Promise<import('puppeteer-core').Browser>}
  */
-async function connectToChrome(port) {
+async function connectBrowser(port) {
   const browserURL = `http://127.0.0.1:${port}`;
   const browser = await puppeteer.connect({
     browserURL,
     defaultViewport: null,
-    protocolTimeout: config.chromeProtocolTimeout,
+    protocolTimeout: config.browserProtocolTimeout,
   });
-  console.log('[browser] connected to existing Chrome on port', port);
+  console.log('[browser] connected to existing browser on port', port);
   return browser;
 }
 
 /**
- * 启动新的 Chrome 实例
+ * 启动新的浏览器实例
  * @param {object} opts
  * @param {string} opts.executablePath
  * @param {number} opts.port
@@ -105,20 +172,20 @@ async function connectToChrome(port) {
  * @param {boolean} opts.headless
  * @returns {Promise<import('puppeteer-core').Browser>}
  */
-async function launchChrome({ executablePath, port, userDataDir, headless }) {
+async function launchBrowser({ executablePath, port, userDataDir, headless }) {
   const browser = await puppeteer.launch({
     executablePath,
     headless,
     userDataDir,
     defaultViewport: null,
     args: [
-      ...CHROME_ARGS,
+      ...BROWSER_ARGS,
       `--remote-debugging-port=${port}`,
     ],
     ignoreDefaultArgs: ['--enable-automation'],
-    protocolTimeout: config.chromeProtocolTimeout,
+    protocolTimeout: config.browserProtocolTimeout,
   });
-  console.log('[browser] launched Chrome, pid:', browser.process()?.pid, 'port:', port, 'dataDir:', userDataDir);
+  console.log('[browser] launched, pid:', browser.process()?.pid, 'port:', port, 'path:', executablePath);
   return browser;
 }
 
@@ -155,22 +222,22 @@ async function findOrCreateGeminiPage(browser) {
  *
  * 逻辑：
  *   1. 如果已有 _browser 且未断开 → 直接复用
- *   2. 检查端口是否有 Chrome → connect
- *   3. 否则 launch 新 Chrome（需要 executablePath）
+ *   2. 检查端口是否有浏览器 → connect
+ *   3. 否则自动检测 / 使用配置的路径启动浏览器
  *
  * @param {object} [opts]
- * @param {string} [opts.executablePath] - Chrome 路径（仅 launch 时需要）
- * @param {number} [opts.port=9222] - 调试端口
- * @param {string} [opts.userDataDir] - 用户数据目录
- * @param {boolean} [opts.headless=false]
+ * @param {string} [opts.executablePath] - 浏览器路径（仅 launch 时需要，不传则自动检测）
+ * @param {number} [opts.port] - 调试端口（env: BROWSER_DEBUG_PORT，默认 9222）
+ * @param {string} [opts.userDataDir] - 用户数据目录（env: BROWSER_USER_DATA_DIR）
+ * @param {boolean} [opts.headless] - 无头模式（env: BROWSER_HEADLESS，默认 false）
  * @returns {Promise<{browser: import('puppeteer-core').Browser, page: import('puppeteer-core').Page}>}
  */
 export async function ensureBrowser(opts = {}) {
   const {
-    executablePath = config.chromePath,
-    port = config.chromeDebugPort,
-    userDataDir = config.chromeUserDataDir,
-    headless = config.chromeHeadless,
+    executablePath = config.browserPath,
+    port = config.browserDebugPort,
+    userDataDir = config.browserUserDataDir,
+    headless = config.browserHeadless,
   } = opts;
 
   // 1. 复用已有连接
@@ -180,11 +247,11 @@ export async function ensureBrowser(opts = {}) {
     return { browser: _browser, page };
   }
 
-  // 2. 尝试连接已在运行的 Chrome
+  // 2. 尝试连接已在运行的浏览器
   const alive = await isPortAlive(port);
   if (alive) {
     try {
-      _browser = await connectToChrome(port);
+      _browser = await connectBrowser(port);
       const page = await findOrCreateGeminiPage(_browser);
       return { browser: _browser, page };
     } catch (err) {
@@ -192,22 +259,25 @@ export async function ensureBrowser(opts = {}) {
     }
   }
 
-  // 3. 启动新 Chrome
-  if (!executablePath) {
+  // 3. 启动新浏览器：优先用配置路径，否则自动检测
+  const resolvedPath = executablePath || detectBrowser();
+  if (!resolvedPath) {
     throw new Error(
-      `[browser] 端口 ${port} 无可用 Chrome，且未提供 executablePath。\n` +
-      `请先手动启动 Chrome：chrome --remote-debugging-port=${port} --user-data-dir="${userDataDir}"\n` +
-      `或传入 executablePath 让 skill 自动启动。`
+      `[browser] 端口 ${port} 无可用浏览器，且未找到可执行文件。\n` +
+      `请通过以下任一方式解决：\n` +
+      `  1. 设置环境变量 BROWSER_PATH 指向 Chrome / Edge / Chromium 的可执行文件\n` +
+      `  2. 手动启动浏览器：chrome --remote-debugging-port=${port} --user-data-dir="${userDataDir}"\n` +
+      `  3. 安装 Chrome 或 Edge 到默认位置`
     );
   }
 
-  _browser = await launchChrome({ executablePath, port, userDataDir, headless });
+  _browser = await launchBrowser({ executablePath: resolvedPath, port, userDataDir, headless });
   const page = await findOrCreateGeminiPage(_browser);
   return { browser: _browser, page };
 }
 
 /**
- * 断开浏览器连接（不杀 Chrome 进程，方便下次复用）
+ * 断开浏览器连接（不杀进程，方便下次复用）
  */
 export function disconnect() {
   if (_browser) {
@@ -218,7 +288,7 @@ export function disconnect() {
 }
 
 /**
- * 关闭浏览器（杀 Chrome 进程）
+ * 关闭浏览器（杀进程）
  */
 export async function close() {
   if (_browser) {
