@@ -18,6 +18,8 @@ import { execSync } from 'node:child_process';
 import { platform } from 'node:os';
 import { createGeminiSession, disconnect } from './index.js';
 
+const prompt = 'Hello Gemini!';
+
 // ── Demo 专用：杀掉所有 Chromium 系浏览器进程 ──
 function killAllBrowserProcesses() {
   const os = platform();
@@ -111,7 +113,7 @@ async function main() {
 
     // 3. 发送一句话
     console.log('\n[3] 发送提示词...');
-    const result = await ops.sendAndWait('Hello Gemini!', {
+    const result = await ops.sendAndWait(prompt, {
       timeout: 60_000,
       onPoll(poll) {
         console.log(`  polling... status=${poll.status}`);

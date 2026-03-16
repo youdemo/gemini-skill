@@ -15,7 +15,20 @@ const SELECTORS = {
     '[contenteditable="true"][data-placeholder*="Gemini"]',
     'div[contenteditable="true"][role="textbox"]',
   ],
-  actionBtn: [
+  /** 输入区底部按钮的父容器（包裹麦克风 + 发送按钮） */
+  actionBtnWrapper: [
+    'div.input-buttons-wrapper-bottom',
+  ],
+  /** 麦克风容器 — class 带 hidden 时隐藏（表示输入框有文字） */
+  micContainer: [
+    'div.mic-button-container',
+  ],
+  /** 发送按钮容器 — class 带 visible 时可见（输入框有文字），否则隐藏 */
+  sendBtnContainer: [
+    'div.send-button-container',
+  ],
+  /** 发送按钮本身 — class 末尾 submit（可发送）或 stop（加载中） */
+  sendBtn: [
     '.send-button-container button.send-button',
     '.send-button-container button',
   ],
@@ -26,8 +39,30 @@ const SELECTORS = {
     'a[aria-label*="new chat" i]',
   ],
   modelBtn: [
-    'button:has-text("Gemini")',
-    '[role="button"][aria-haspopup="menu"]',
+    '[data-test-id="bard-mode-menu-button"]',      // 测试专属属性
+    'button[aria-label="打开模式选择器"]',            // 中文 aria-label
+    'button[aria-label*="mode selector" i]',        // 英文 aria-label 兜底
+    'button.mat-mdc-menu-trigger.input-area-switch',// class 组合兜底
+  ],
+  /** 模型标签文本容器（读取当前选中的模型名，如 "Pro"） */
+  modelLabel: [
+    '[data-test-id="logo-pill-label-container"] span',  // 最内层 span 包含模型名
+    'div.logo-pill-label-container span',               // class 兜底
+  ],
+  /** 模型选项：Pro */
+  modelOptionPro: [
+    '[data-test-id="bard-mode-option-pro"]',        // 中英文统一
+  ],
+  /** 模型选项：快速 / Quick */
+  modelOptionQuick: [
+    '[data-test-id="bard-mode-option-快速"]',        // 中文
+    '[data-test-id="bard-mode-option-quick"]',       // 英文
+  ],
+  /** 模型选项：思考 / Think */
+  modelOptionThink: [
+    '[data-test-id="bard-mode-option-思考"]',        // 中文
+    '[data-test-id="bard-mode-option-think"]',       // 英文
+    '[data-test-id="bard-mode-option-thinking"]',    // 英文变体
   ],
   tempChatBtn: [
     '[data-test-id="temp-chat-button"]',          // 最稳定：测试专属属性
@@ -58,30 +93,34 @@ export function createOps(page) {
 
     /**
      * 探测页面各元素是否就位
-     * @returns {Promise<{promptInput: boolean, actionBtn: boolean, newChatBtn: boolean, modelBtn: boolean, tempChatBtn: boolean, status: object}>}
+     * @returns {Promise<{promptInput: boolean, actionBtnWrapper: boolean, newChatBtn: boolean, modelBtn: boolean, modelLabel: boolean, tempChatBtn: boolean, currentModel: string, status: object}>}
      */
     async probe() {
-      const [promptInput, actionBtn, newChatBtn, modelBtn, tempChatBtn] = await Promise.all([
+      const [promptInput, actionBtnWrapper, newChatBtn, modelBtn, modelLabel, tempChatBtn, status, currentModelResult] = await Promise.all([
         op.locate(SELECTORS.promptInput),
-        op.locate(SELECTORS.actionBtn),
+        op.locate(SELECTORS.actionBtnWrapper),
         op.locate(SELECTORS.newChatBtn),
         op.locate(SELECTORS.modelBtn),
+        op.locate(SELECTORS.modelLabel),
         op.locate(SELECTORS.tempChatBtn),
+        this.getStatus(),
+        this.getCurrentModel(),
       ]);
-      const status = await this.getStatus();
       return {
         promptInput: promptInput.found,
-        actionBtn: actionBtn.found,
+        actionBtnWrapper: actionBtnWrapper.found,
         newChatBtn: newChatBtn.found,
         modelBtn: modelBtn.found,
+        modelLabel: modelLabel.found,
         tempChatBtn: tempChatBtn.found,
+        currentModel: currentModelResult.ok ? currentModelResult.raw : '',
         status,
       };
     },
 
     /**
      * 点击指定按钮
-     * @param {'actionBtn'|'newChatBtn'|'modelBtn'|'tempChatBtn'} key
+     * @param {'sendBtn'|'newChatBtn'|'modelBtn'|'tempChatBtn'|'modelOptionPro'|'modelOptionQuick'|'modelOptionThink'} key
      */
     async click(key) {
       const sels = SELECTORS[key];
@@ -108,20 +147,116 @@ export function createOps(page) {
       if (!clickResult.ok) {
         return { ok: false, error: 'temp_chat_btn_not_found' };
       }
-
-      // 等待页面导航 / 内容刷新完成
-      try {
-        await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout });
-      } catch {
-        // 部分场景下按钮不触发 navigation 而是 SPA 内部路由，静默跳过
-        console.log('[ops] temp chat: navigation wait timed out, continuing (may be SPA routing)');
-      }
-
-      // 再给一点时间让 UI 稳定
+      //  给一点时间让 UI 稳定
       await sleep(500);
 
       console.log('[ops] entered temp chat mode');
       return { ok: true };
+    },
+
+    /**
+     * 获取当前选中的模型名称
+     *
+     * 读取模型选择按钮中 logo-pill-label-container 内的 span 文本，
+     * 返回去除空白后的小写文本（如 "pro"、"快速"、"思考"）。
+     *
+     * @returns {Promise<{ok: boolean, model: string, raw: string, error?: string}>}
+     */
+    async getCurrentModel() {
+      return op.query((sels) => {
+        let el = null;
+        for (const sel of sels) {
+          try { el = document.querySelector(sel); } catch { /* skip */ }
+          if (el) break;
+        }
+        if (!el) {
+          return { ok: false, model: '', raw: '', error: 'model_label_not_found' };
+        }
+        const raw = (el.textContent || '').trim();
+        return { ok: true, model: raw.toLowerCase(), raw };
+      }, SELECTORS.modelLabel);
+    },
+
+    /**
+     * 判断当前模型是否为 Pro
+     *
+     * @returns {Promise<boolean>}
+     */
+    async isModelPro() {
+      const result = await this.getCurrentModel();
+      if (!result.ok) return false;
+      return result.model === 'pro';
+    },
+
+    /**
+     * 切换到指定模型
+     *
+     * 流程：
+     *   1. 点击模型选择按钮，打开模型下拉菜单
+     *   2. 等待菜单出现
+     *   3. 点击目标模型选项
+     *   4. 等待 UI 稳定
+     *
+     * @param {'pro'|'quick'|'think'} model - 目标模型
+     * @returns {Promise<{ok: boolean, error?: string, previousModel?: string}>}
+     */
+    async switchToModel(model) {
+      const selectorMap = {
+        pro: SELECTORS.modelOptionPro,
+        quick: SELECTORS.modelOptionQuick,
+        think: SELECTORS.modelOptionThink,
+      };
+
+      const targetSels = selectorMap[model];
+      if (!targetSels) {
+        return { ok: false, error: `unknown_model: ${model}` };
+      }
+
+      // 记录切换前的模型
+      const before = await this.getCurrentModel();
+      const previousModel = before.ok ? before.raw : undefined;
+
+      // 1. 点击模型选择按钮，打开下拉菜单
+      const openResult = await this.click('modelBtn');
+      if (!openResult.ok) {
+        return { ok: false, error: 'model_menu_open_failed', previousModel };
+      }
+
+      // 2. 等待菜单动画展开
+      await sleep(800);
+
+      // 3. 点击目标模型选项
+      const selectResult = await op.click(targetSels);
+      if (!selectResult.ok) {
+        return { ok: false, error: `model_option_${model}_not_found`, previousModel };
+      }
+
+      // 4. 等待 UI 稳定
+      await sleep(800);
+
+      console.log(`[ops] switched model: ${previousModel || '?'} → ${model}`);
+      return { ok: true, previousModel };
+    },
+
+    /**
+     * 确保当前模型为 Pro，如果不是则自动切换
+     *
+     * @returns {Promise<{ok: boolean, switched: boolean, previousModel?: string, error?: string}>}
+     */
+    async ensureModelPro() {
+      const isPro = await this.isModelPro();
+      if (isPro) {
+        console.log('[ops] model is already Pro');
+        return { ok: true, switched: false };
+      }
+
+      console.log('[ops] model is not Pro, switching...');
+      const result = await this.switchToModel('pro');
+      if (!result.ok) {
+        return { ok: false, switched: false, error: result.error, previousModel: result.previousModel };
+      }
+
+      return { ok: true, switched: true, previousModel: result.previousModel };
     },
 
     /**
@@ -133,38 +268,112 @@ export function createOps(page) {
     },
 
     /**
-     * 获取当前按钮状态（通过一次性 evaluate 读取，不注入任何东西）
+     * 获取输入区 action 按钮的详细状态
+     *
+     * 状态模型（基于 DOM class 判断）：
+     *
+     * ┌──────────────────────────────────────────────────────────────────┐
+     * │  input-buttons-wrapper-bottom（父容器）                          │
+     * │  ┌─────────────────────┐  ┌────────────────────────────────┐   │
+     * │  │ mic-button-container│  │ send-button-container          │   │
+     * │  │  class 带 hidden    │  │  class 带 visible / 无         │   │
+     * │  │  → 输入框有文字     │  │  ┌──────────────────────────┐  │   │
+     * │  │  class 无 hidden    │  │  │ button.send-button       │  │   │
+     * │  │  → 输入框为空(待命) │  │  │  class 尾 submit → 可发送│  │   │
+     * │  └─────────────────────┘  │  │  class 尾 stop   → 加载中│  │   │
+     * │                           │  └──────────────────────────┘  │   │
+     * │                           └────────────────────────────────┘   │
+     * └──────────────────────────────────────────────────────────────────┘
+     *
+     * 返回值：
+     *   - status: 'mic'     — 麦克风态（输入框为空，Gemini 待命）
+     *   - status: 'submit'  — 发送态（输入框有文字，可点击发送）
+     *   - status: 'stop'    — 加载态（Gemini 正在回答，按钮变为停止）
+     *   - status: 'unknown' — 无法识别
+     *
+     * @returns {Promise<{status: 'mic'|'submit'|'stop'|'unknown', micHidden: boolean, sendVisible: boolean, btnClass: string, error?: string}>}
      */
     async getStatus() {
-      return op.query((sels) => {
-        // 在页面上下文中查找 actionBtn
-        let btn = null;
-        for (const sel of sels) {
-          try {
-            const all = [...document.querySelectorAll(sel)];
-            btn = all.find(n => {
-              const r = n.getBoundingClientRect();
-              const st = getComputedStyle(n);
-              return r.width > 0 && r.height > 0
-                && st.display !== 'none' && st.visibility !== 'hidden';
-            }) || null;
-          } catch { /* skip */ }
-          if (btn) break;
+      return op.query((selectors) => {
+        const { micContainer: micSels, sendBtnContainer: sendSels, sendBtn: btnSels } = selectors;
+
+        // ── 查找麦克风容器 ──
+        let micEl = null;
+        for (const sel of micSels) {
+          try { micEl = document.querySelector(sel); } catch { /* skip */ }
+          if (micEl) break;
         }
 
-        if (!btn) return { status: 'unknown', error: 'btn_not_found' };
-
-        const label = (btn.getAttribute('aria-label') || '').trim();
-        const disabled = btn.getAttribute('aria-disabled') === 'true';
-
-        if (/停止|Stop/i.test(label)) {
-          return { status: 'loading', label };
+        // ── 查找发送按钮容器 ──
+        let sendContainerEl = null;
+        for (const sel of sendSels) {
+          try { sendContainerEl = document.querySelector(sel); } catch { /* skip */ }
+          if (sendContainerEl) break;
         }
-        if (/发送|Send|Submit/i.test(label)) {
-          return { status: 'ready', label, disabled };
+
+        // ── 查找发送按钮本身 ──
+        let btnEl = null;
+        for (const sel of btnSels) {
+          try { btnEl = document.querySelector(sel); } catch { /* skip */ }
+          if (btnEl) break;
         }
-        return { status: 'idle', label, disabled };
-      }, SELECTORS.actionBtn);
+
+        // 都找不到则 unknown
+        if (!micEl && !sendContainerEl) {
+          return { status: 'unknown', micHidden: false, sendVisible: false, btnClass: '', error: 'containers_not_found' };
+        }
+
+        const micClass = micEl ? micEl.className : '';
+        const sendClass = sendContainerEl ? sendContainerEl.className : '';
+        const btnClass = btnEl ? btnEl.className : '';
+
+        const micHidden = /\bhidden\b/.test(micClass);
+        const sendVisible = /\bvisible\b/.test(sendClass);
+
+        // ── 判断状态 ──
+        // 1. 发送容器可见 → 看按钮 class 是 submit 还是 stop
+        if (sendVisible) {
+          if (/\bstop\b/.test(btnClass)) {
+            return { status: 'stop', micHidden, sendVisible, btnClass };
+          }
+          if (/\bsubmit\b/.test(btnClass)) {
+            return { status: 'submit', micHidden, sendVisible, btnClass };
+          }
+          // 发送容器可见但按钮 class 无法识别，降级为 submit
+          return { status: 'submit', micHidden, sendVisible, btnClass };
+        }
+
+        // 2. 麦克风未隐藏 → 待命态（输入框为空）
+        if (!micHidden) {
+          return { status: 'mic', micHidden, sendVisible, btnClass };
+        }
+
+        // 3. 麦克风隐藏但发送容器不可见 → 可能的中间状态，用按钮 class 兜底
+        if (/\bstop\b/.test(btnClass)) {
+          return { status: 'stop', micHidden, sendVisible, btnClass };
+        }
+
+        return { status: 'unknown', micHidden, sendVisible, btnClass, error: 'ambiguous_state' };
+      }, { micContainer: SELECTORS.micContainer, sendBtnContainer: SELECTORS.sendBtnContainer, sendBtn: SELECTORS.sendBtn });
+    },
+
+    /**
+     * 判断 Gemini 当前的回答状态
+     *
+     * 基于 actionBtn 状态推导：
+     *   - 'idle'       — 待命（麦克风态 或 发送态，Gemini 没在回答）
+     *   - 'answering'  — 回答中（按钮为 stop 态，Gemini 正在生成）
+     *
+     * @returns {Promise<{answering: boolean, status: 'idle'|'answering', detail: object}>}
+     */
+    async getAnswerState() {
+      const detail = await this.getActionBtnStatus();
+      const answering = detail.status === 'stop';
+      return {
+        answering,
+        status: answering ? 'answering' : 'idle',
+        detail,
+      };
     },
 
     /**
@@ -295,7 +504,7 @@ export function createOps(page) {
      * @returns {Promise<{ok: boolean, elapsed: number, finalStatus?: object, error?: string}>}
      */
     async sendAndWait(prompt, opts = {}) {
-      const { timeout = 120_000, interval = 8_000, onPoll } = opts;
+      const { timeout = 120_000, interval = 1_000, onPoll } = opts;
 
       // 1. 填写
       const fillResult = await this.fillPrompt(prompt);
@@ -307,12 +516,12 @@ export function createOps(page) {
       await sleep(300);
 
       // 2. 点击发送
-      const clickResult = await this.click('actionBtn');
+      const clickResult = await this.click('sendBtn');
       if (!clickResult.ok) {
         return { ok: false, error: 'send_click_failed', detail: clickResult, elapsed: 0 };
       }
 
-      // 3. 轮询等待
+      // 3. 轮询等待（回到麦克风态 = Gemini 回答完毕）
       const start = Date.now();
       let lastStatus = null;
 
@@ -323,7 +532,7 @@ export function createOps(page) {
         lastStatus = poll;
         onPoll?.(poll);
 
-        if (poll.status === 'idle') {
+        if (poll.status === 'mic') {
           return { ok: true, elapsed: Date.now() - start, finalStatus: poll };
         }
         if (poll.status === 'unknown') {

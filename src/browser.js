@@ -306,6 +306,7 @@ const BROWSER_ARGS = [
   '--no-default-browser-check',              // 不弹"设为默认浏览器"提示
   '--disable-crash-reporter',                // 禁用崩溃上报，减少后台进程
   '--hide-crash-restore-bubble',             // 隐藏"恢复上次会话"气泡
+  '--test-type',  // 专门用来屏蔽“不受支持的命令行标记”的黄条警告
 ];
 
 /**
