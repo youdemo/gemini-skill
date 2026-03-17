@@ -15,10 +15,12 @@
  * 所有配置项见 .env，可直接编辑或通过命令行设环境变量。
  */
 import { execSync } from 'node:child_process';
-import { platform } from 'node:os';
+import { platform, homedir } from 'node:os';
+import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { createGeminiSession, disconnect } from './index.js';
 
-const prompt = 'Hello Gemini!';
+const prompt = '你好呀~请给我画一张植物大战僵尸的漫画，左侧是豌豆射手，右侧是僵尸。僵尸面对豌豆射手的攻击仓皇逃窜！';
 
 // ── Demo 专用：杀掉所有 Chromium 系浏览器进程 ──
 function killAllBrowserProcesses() {
@@ -111,15 +113,73 @@ async function main() {
     const probe = await ops.probe();
     console.log('probe:', JSON.stringify(probe, null, 2));
 
-    // 3. 发送一句话
-    console.log('\n[3] 发送提示词...');
+    // 3. 确保使用 Pro 模型
+    console.log('\n[3] 检查模型...');
+    if (probe.currentModel.toLowerCase() === 'pro') {
+      console.log('[3] 当前已是 Pro 模型，跳过');
+    } else {
+      console.log(`[3] 当前模型: ${probe.currentModel || '未知'}，切换到 Pro...`);
+      const switchResult = await ops.ensureModelPro();
+      if (switchResult.ok) {
+        console.log(`[3] 已切换到 Pro（之前: ${switchResult.previousModel || '未知'}）`);
+      } else {
+        console.warn(`[3] 切换 Pro 失败: ${switchResult.error}，继续使用当前模型`);
+      }
+    }
+
+    // 4. 发送一句话
+    console.log('\n[4] 发送提示词...');
     const result = await ops.sendAndWait(prompt, {
-      timeout: 60_000,
+      timeout: 120_000,
       onPoll(poll) {
         console.log(`  polling... status=${poll.status}`);
       },
     });
     console.log('result:', JSON.stringify(result, null, 2));
+
+    // 5. 获取最新图片并保存到本地
+    if (result.ok) {
+      console.log('\n[5] 查找最新生成的图片...');
+      await sleep(2000); // 等待图片渲染完毕
+
+      const imgInfo = await ops.getLatestImage();
+      console.log('imgInfo:', JSON.stringify(imgInfo, null, 2));
+
+      if (imgInfo.ok && imgInfo.src) {
+        console.log(`[5] 找到图片 (${imgInfo.width}x${imgInfo.height}, isNew=${imgInfo.isNew})`);
+
+        // 提取 base64 数据
+        console.log(`[5] 提取图片数据 (src=${imgInfo.src})...`);
+        const b64Result = await ops.extractImageBase64(imgInfo.src);
+
+        if (b64Result.ok && b64Result.dataUrl) {
+          // dataUrl 格式: data:image/png;base64,iVBOR...
+          const matches = b64Result.dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+          if (matches) {
+            const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+            const base64Data = matches[2];
+            const buffer = Buffer.from(base64Data, 'base64');
+
+            // 保存到 ~/gemini-skill-output/
+            const outputDir = join(homedir(), 'gemini-skill-output');
+            if (!existsSync(outputDir)) {
+              mkdirSync(outputDir, { recursive: true });
+            }
+            const filename = `gemini_${Date.now()}.${ext}`;
+            const filepath = join(outputDir, filename);
+
+            writeFileSync(filepath, buffer);
+            console.log(`[5] ✅ 图片已保存: ${filepath} (${(buffer.length / 1024).toFixed(1)} KB, method=${b64Result.method})`);
+          } else {
+            console.warn('[5] ⚠ dataUrl 格式无法解析');
+          }
+        } else {
+          console.warn(`[5] ⚠ 提取图片数据失败: ${b64Result.error || 'unknown'}`);
+        }
+      } else {
+        console.log('[5] 未找到图片（可能本次回答不含图片）');
+      }
+    }
 
   } catch (err) {
     console.error('Error:', err);

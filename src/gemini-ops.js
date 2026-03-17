@@ -465,19 +465,29 @@ export function createOps(page) {
     },
 
     /**
-     * 提取最新图片的 Base64 数据（Canvas 优先，fetch 兜底）
+     * 提取指定图片的 Base64 数据（Canvas 优先，fetch 兜底）
+     *
+     * @param {string} url - 目标图片的 src URL
+     * @returns {Promise<{ok: boolean, dataUrl?: string, width?: number, height?: number, method?: 'canvas'|'fetch', error?: string}>}
      */
-    async extractImageBase64() {
-      return op.query(() => {
+    async extractImageBase64(url) {
+      if (!url) {
+        console.warn('[extractImageBase64] ❌ 未提供 url 参数');
+        return { ok: false, error: 'missing_url' };
+      }
+      console.log(`[extractImageBase64] 🔍 开始提取, url=${url.slice(0, 120)}...`);
+
+      const canvasResult = await op.query((targetUrl) => {
+        // ── 在页面中根据 url 查找匹配的 img 元素 ──
         const imgs = [...document.querySelectorAll('img.image.loaded')];
-        if (!imgs.length) {
-          return { ok: false, error: 'no_loaded_images' };
+        const img = imgs.find(i => i.src === targetUrl);
+        if (!img) {
+          return { ok: false, error: 'img_not_found_by_url', searched: imgs.length };
         }
-        const img = imgs[imgs.length - 1];
         const w = img.naturalWidth || img.width;
         const h = img.naturalHeight || img.height;
 
-        // 尝试 Canvas 同步提取
+        // ── 尝试 Canvas 同步提取 ──
         try {
           const canvas = document.createElement('canvas');
           canvas.width = w;
@@ -485,31 +495,52 @@ export function createOps(page) {
           canvas.getContext('2d').drawImage(img, 0, 0);
           const dataUrl = canvas.toDataURL('image/png');
           return { ok: true, dataUrl, width: w, height: h, method: 'canvas' };
-        } catch { /* canvas tainted, fallback */ }
+        } catch (e) {
+          // canvas tainted（跨域图片），记录原因后降级
+          return { ok: false, needFetch: true, src: img.src, width: w, height: h, canvasError: e.message || String(e) };
+        }
+      }, url);
 
-        // 标记需要 fetch fallback
-        return { ok: false, needFetch: true, src: img.src, width: w, height: h };
-      }).then(async (result) => {
-        if (result.ok || !result.needFetch) return result;
+      if (canvasResult.ok) {
+        console.log(`[extractImageBase64] ✅ Canvas 提取成功 (${canvasResult.width}x${canvasResult.height})`);
+        return canvasResult;
+      }
 
-        // Fetch fallback: 在页面上下文中异步执行
-        return page.evaluate(async (src, w, h) => {
-          try {
-            const r = await fetch(src);
-            if (!r.ok) throw new Error(`fetch_status_${r.status}`);
-            const blob = await r.blob();
-            return await new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve({
-                ok: true, dataUrl: reader.result, width: w, height: h, method: 'fetch',
-              });
-              reader.readAsDataURL(blob);
+      if (!canvasResult.needFetch) {
+        // img 元素都没找到，直接返回失败
+        console.warn(`[extractImageBase64] ❌ 页面中未找到匹配的 img 元素 (已扫描 ${canvasResult.searched || 0} 张)`);
+        return canvasResult;
+      }
+
+      // ── Fetch 降级：Canvas 被跨域污染，改用 fetch 读取二进制 ──
+      console.log(`[extractImageBase64] ⚠ Canvas 被污染 (${canvasResult.canvasError})，降级为 fetch...`);
+
+      const fetchResult = await page.evaluate(async (src, w, h) => {
+        try {
+          const r = await fetch(src);
+          if (!r.ok) return { ok: false, error: `fetch_status_${r.status}` };
+          const blob = await r.blob();
+          return await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve({
+              ok: true, dataUrl: reader.result, width: w, height: h, method: 'fetch',
             });
-          } catch (err) {
-            return { ok: false, error: 'extract_failed', detail: err.message || String(err) };
-          }
-        }, result.src, result.width, result.height);
-      });
+            reader.onerror = () => resolve({
+              ok: false, error: 'filereader_error',
+            });
+            reader.readAsDataURL(blob);
+          });
+        } catch (err) {
+          return { ok: false, error: 'fetch_failed', detail: err.message || String(err) };
+        }
+      }, canvasResult.src, canvasResult.width, canvasResult.height);
+
+      if (fetchResult.ok) {
+        console.log(`[extractImageBase64] ✅ Fetch 提取成功 (${fetchResult.width}x${fetchResult.height})`);
+      } else {
+        console.warn(`[extractImageBase64] ❌ Fetch 提取失败: ${fetchResult.error}${fetchResult.detail ? ' — ' + fetchResult.detail : ''}`);
+      }
+      return fetchResult;
     },
 
     /**
@@ -621,12 +652,12 @@ export function createOps(page) {
       await sleep(2000);
 
       // 4. 获取图片
-      const imgInfo = await this.getLatestImage();
+      let imgInfo = await this.getLatestImage();
       if (!imgInfo.ok) {
         await sleep(3000);
-        const retry = await this.getLatestImage();
-        if (!retry.ok) {
-          return { ok: false, error: 'no_image_found', elapsed: waitResult.elapsed, imgInfo: retry };
+        imgInfo = await this.getLatestImage();
+        if (!imgInfo.ok) {
+          return { ok: false, error: 'no_image_found', elapsed: waitResult.elapsed, imgInfo };
         }
       }
 
@@ -635,7 +666,7 @@ export function createOps(page) {
         const dlResult = await this.downloadLatestImage();
         return { ok: dlResult.ok, method: 'download', elapsed: waitResult.elapsed, ...dlResult };
       } else {
-        const b64Result = await this.extractImageBase64();
+        const b64Result = await this.extractImageBase64(imgInfo.src);
         return { ok: b64Result.ok, method: b64Result.method, elapsed: waitResult.elapsed, ...b64Result };
       }
     },
