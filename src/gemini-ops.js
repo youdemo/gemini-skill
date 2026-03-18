@@ -75,6 +75,17 @@ const SELECTORS = {
     '[data-test-id="overflow-container"]',         // 测试专属属性
     'div.overflow-container',                      // class 兜底
   ],
+  /** 加号面板按钮（点击后弹出上传菜单） */
+  uploadPanelBtn: [
+    'button.upload-card-button[aria-haspopup="menu"]', // class + aria 组合
+    'button[aria-controls="upload-file-u"]',           // aria-controls 兜底
+    'button.upload-card-button',                       // class 兜底
+  ],
+  /** 上传文件选项（加号面板展开后的"上传文件"按钮） */
+  uploadFileBtn: [
+    '[data-test-id="uploader-images-files-button-advanced"]', // 测试专属属性
+    'images-files-uploader',                                  // 标签名兜底
+  ],
 };
 
 /**
@@ -686,6 +697,65 @@ export function createOps(page) {
     },
 
     // ─── 高层组合操作 ───
+
+    /**
+     * 上传图片到 Gemini 输入框
+     *
+     * 流程：
+     *   1. 点击加号面板按钮，展开上传菜单
+     *   2. 等待 300ms 让菜单动画稳定
+     *   3. 拦截文件选择器 + 点击"上传文件"按钮（Promise.all 并发）
+     *   4. 向文件选择器塞入指定图片路径
+     *   5. 轮询等待图片加载完成（.image-preview.loading 消失）
+     *
+     * @param {string} filePath - 本地图片的绝对路径
+     * @returns {Promise<{ok: boolean, elapsed?: number, warning?: string, error?: string, detail?: string}>}
+     */
+    async uploadImage(filePath) {
+      try {
+        // 1. 点击加号面板按钮，展开上传菜单
+        const panelClick = await this.click('uploadPanelBtn');
+        if (!panelClick.ok) {
+          return { ok: false, error: 'upload_panel_click_failed', detail: panelClick.error };
+        }
+
+        // 2. 等待菜单动画稳定
+        await sleep(250);
+
+        // 3. Promise.all 是精髓：一边开始监听文件选择器弹窗，一边点击"上传文件"按钮
+        const [fileChooser] = await Promise.all([
+          page.waitForFileChooser({ timeout: 3_000 }),
+          this.click('uploadFileBtn'),
+        ]);
+
+        // 4. 弹窗被拦截，塞入文件
+        await fileChooser.accept([filePath]);
+        console.log(`[ops] 文件已塞入，等待 Gemini 加载图片...`);
+
+        // 5. 等待图片加载完成（.image-preview.loading 消失）
+        const loadTimeout = 10_000;
+        const loadInterval = 250;
+        const loadStart = Date.now();
+
+        while (Date.now() - loadStart < loadTimeout) {
+          const loading = await op.query(() => {
+            const el = document.querySelector('.image-preview.loading');
+            return !!el;
+          });
+          if (!loading) {
+            console.log(`[ops] 图片加载完成 (${Date.now() - loadStart}ms): ${filePath}`);
+            return { ok: true, elapsed: Date.now() - loadStart };
+          }
+          await sleep(loadInterval);
+        }
+
+        // 超时了但文件已经塞进去了，不算完全失败
+        console.warn(`[ops] 图片加载超时 (${loadTimeout}ms)，但文件已提交`);
+        return { ok: true, warning: 'load_timeout', elapsed: Date.now() - loadStart };
+      } catch (e) {
+        return { ok: false, error: 'upload_image_failed', detail: e.message };
+      }
+    },
 
     /**
      * 发送提示词并等待生成完成

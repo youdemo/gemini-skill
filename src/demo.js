@@ -127,8 +127,19 @@ async function main() {
       }
     }
 
-    // 4. 发送一句话
-    console.log('\n[4] 发送提示词...');
+    // 4. 上传图片
+    console.log('\n[4] 上传图片...');
+
+    const uploadResult = await ops.uploadImage('./gemini-image/tianyi.jpg');
+    if (uploadResult.ok) {
+      console.log(`[4] ✅ 图片上传完成 (${uploadResult.elapsed}ms)`);
+      if (uploadResult.warning) console.warn(`[4] ⚠ ${uploadResult.warning}`);
+    } else {
+      console.warn(`[4] ⚠ 图片上传失败: ${uploadResult.error} — ${uploadResult.detail}`);
+    }
+
+    // 5. 发送一句话
+    console.log('\n[5] 发送提示词...');
     const result = await ops.sendAndWait(prompt, {
       timeout: 120_000,
       onPoll(poll) {
@@ -137,19 +148,18 @@ async function main() {
     });
     console.log('result:', JSON.stringify(result, null, 2));
 
-    // 5. 获取最新图片并保存到本地
+    // 6. 获取最新图片并保存到本地
     if (result.ok) {
-      console.log('\n[5] 查找最新生成的图片...');
-      await sleep(2000); // 等待图片渲染完毕
+      console.log('\n[6] 查找最新生成的图片...');
 
       const imgInfo = await ops.getLatestImage();
       console.log('imgInfo:', JSON.stringify(imgInfo, null, 2));
 
       if (imgInfo.ok && imgInfo.src) {
-        console.log(`[5] 找到图片 (${imgInfo.width}x${imgInfo.height}, isNew=${imgInfo.isNew})`);
+        console.log(`[6] 找到图片 (${imgInfo.width}x${imgInfo.height}, isNew=${imgInfo.isNew})`);
 
         // 提取 base64 数据
-        console.log(`[5] 提取图片数据 (src=${imgInfo.src})...`);
+        console.log(`[6] 提取图片数据 (src=${imgInfo.src})...`);
         const b64Result = await ops.extractImageBase64(imgInfo.src);
 
         if (b64Result.ok && b64Result.dataUrl) {
@@ -160,7 +170,7 @@ async function main() {
             const base64Data = matches[2];
             const buffer = Buffer.from(base64Data, 'base64');
 
-            // 保存到 ~/gemini-skill-output/
+            // 保存到 ./gemini-image/
             const outputDir = './gemini-image';
             if (!existsSync(outputDir)) {
               mkdirSync(outputDir, { recursive: true });
@@ -169,15 +179,15 @@ async function main() {
             const filepath = join(outputDir, filename);
 
             writeFileSync(filepath, buffer);
-            console.log(`[5] ✅ 图片已保存: ${filepath} (${(buffer.length / 1024).toFixed(1)} KB, method=${b64Result.method})`);
+            console.log(`[6] ✅ 图片已保存: ${filepath} (${(buffer.length / 1024).toFixed(1)} KB, method=${b64Result.method})`);
           } else {
-            console.warn('[5] ⚠ dataUrl 格式无法解析');
+            console.warn('[6] ⚠ dataUrl 格式无法解析');
           }
         } else {
-          console.warn(`[5] ⚠ 提取图片数据失败: ${b64Result.error || 'unknown'}`);
+          console.warn(`[6] ⚠ 提取图片数据失败: ${b64Result.error || 'unknown'}`);
         }
       } else {
-        console.log('[5] 未找到图片（可能本次回答不含图片）');
+        console.log('[6] 未找到图片（可能本次回答不含图片）');
       }
     }
 
