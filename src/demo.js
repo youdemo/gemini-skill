@@ -1,99 +1,33 @@
 /**
  * demo.js — 使用示例
  *
- * 两种启动方式：
- *
- * 方式 1（推荐）：先手动启动浏览器，再运行 demo
- *   chrome --remote-debugging-port=40821 --user-data-dir="~/.gemini-skill/browser-data"
- *   （也可以用 Edge：msedge --remote-debugging-port=40821 --user-data-dir=...）
+ * 运行：
  *   node src/demo.js
  *
- * 方式 2：让 skill 自动检测并启动浏览器
- *   node src/demo.js
- *   （或指定路径：BROWSER_PATH="C:/..." node src/demo.js）
+ * Daemon 未运行时会自动后台拉起，无需手动启动。
+ * demo 只需通过 createGeminiSession() 获取会话即可。
  *
- * 所有配置项见 .env，可直接编辑或通过命令行设环境变量。
+ * 所有配置项见 config.js / .env，也可通过命令行设环境变量：
+ *   DAEMON_PORT=40225 DAEMON_TTL_MS=600000 node src/demo.js
  */
-import { execSync } from 'node:child_process';
-import { platform, homedir } from 'node:os';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createGeminiSession, disconnect } from './index.js';
 
 const prompt = 'Gemini你好！请你仿造这个风格，给我生成更多表情包吧！来一张玩手机中。。。';
 
-// ── Demo 专用：杀掉所有 Chromium 系浏览器进程 ──
-function killAllBrowserProcesses() {
-  const os = platform();
-  const commands = os === 'win32'
-    ? [
-        'taskkill /F /IM msedge.exe /T',
-        'taskkill /F /IM chrome.exe /T',
-        'taskkill /F /IM chromium.exe /T',
-      ]
-    : [
-        'pkill -f msedge || true',
-        'pkill -f chrome || true',
-        'pkill -f chromium || true',
-      ];
-
-  for (const cmd of commands) {
-    try {
-      execSync(cmd, { stdio: 'ignore', timeout: 5000 });
-    } catch {
-      // 进程不存在时会报错，忽略
-    }
-  }
-  console.log('[demo] 已清理所有浏览器进程');
-}
-
 /** 异步等待 */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * 创建会话，如果因浏览器目录被锁而失败，自动杀掉全部浏览器进程后重试一次
- */
-async function createSessionWithRetry() {
-  // 禁止 Puppeteer 在 Ctrl+C 等信号时自动杀浏览器进程，
-  // 由 demo 自己处理 SIGINT → disconnect，浏览器保持运行可复用。
-  const opts = {
-    debugOpts: {
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      handleSIGHUP: false,
-    },
-  };
-
-  try {
-    return await createGeminiSession(opts);
-  } catch (err) {
-    const msg = err.message || '';
-    const isLocked = msg.includes('EPERM') || msg.includes('lock') || msg.includes('already');
-
-    if (!isLocked) throw err;
-
-    console.warn(
-      `[demo] 浏览器数据目录被占用，正在清理所有浏览器进程后重试...\n` +
-      `  原始错误：${msg}`
-    );
-
-    killAllBrowserProcesses();
-    await sleep(2000);
-
-    // 重试一次，还失败就直接抛出
-    return await createGeminiSession(opts);
-  }
-}
 
 async function main() {
   console.log('=== Gemini Skill Demo ===\n');
 
-  // 创建会话：自带杀进程重试逻辑
-  const { ops } = await createSessionWithRetry();
+  // 创建会话（自动连接 Daemon 托管的浏览器）
+  const { ops } = await createGeminiSession();
 
-  // ── Ctrl+C 时只断开连接，不杀浏览器进程（下次可复用） ──
+  // ── Ctrl+C 时只断开连接，不杀浏览器进程（浏览器由 Daemon 守护） ──
   process.on('SIGINT', () => {
-    console.log('\n[demo] Ctrl+C 收到，断开浏览器连接（浏览器保持运行）...');
+    console.log('\n[demo] Ctrl+C 收到，断开浏览器连接（浏览器仍由 Daemon 守护）...');
     disconnect();
     process.exit(0);
   });

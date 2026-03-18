@@ -3,11 +3,11 @@
  *
  * 职责：
  *   管理"惰性销毁"定时器。每次收到请求就 resetHeartbeat()（续命）；
- *   超时未活动则触发浏览器优雅关闭，释放系统资源。
+ *   超时未活动则终止浏览器并退出 Daemon 进程，释放全部系统资源。
  *
- * 关键设计：
- *   - _idleTimer.unref()：定时器不阻止 Node 进程退出，
- *     否则 SIGINT 时进程会因为未执行完的定时器而挂住。
+ * 为什么超时后连 Daemon 一起退出：
+ *   Daemon 由 browser.js 的 ensureBrowser() 按需 spawn（detached + unref），
+ *   下次 Skill 调用时会自动重新拉起。闲置时留一个空壳进程占端口没有意义。
  */
 import { terminateBrowser } from './engine.js';
 
@@ -16,6 +16,7 @@ const DEFAULT_TTL_MS = 30 * 60 * 1000; // 30 分钟
 let _idleTimer = null;
 let _ttlMs = DEFAULT_TTL_MS;
 let _lastHeartbeat = 0;
+let _httpServer = null;
 
 /**
  * 设置 TTL（可通过环境变量覆盖）
@@ -26,6 +27,14 @@ export function setTTL(ms) {
 }
 
 /**
+ * 注入 HTTP server 引用，供超时退出时关闭
+ * @param {import('node:http').Server} server
+ */
+export function setServer(server) {
+  _httpServer = server;
+}
+
+/**
  * 重置心跳定时器 — 每次 API 调用时执行
  */
 export function resetHeartbeat() {
@@ -33,13 +42,22 @@ export function resetHeartbeat() {
   _lastHeartbeat = Date.now();
 
   _idleTimer = setTimeout(async () => {
-    console.log(`[lifecycle] 💤 ${(_ttlMs / 60000).toFixed(0)} 分钟未活动，终止浏览器进程`);
+    console.log(`[lifecycle] 💤 ${(_ttlMs / 60000).toFixed(0)} 分钟未活动，终止浏览器并退出 Daemon`);
     await terminateBrowser();
+
+    // 关闭 HTTP 服务器，停止接受新连接
+    if (_httpServer) {
+      _httpServer.close();
+      _httpServer = null;
+    }
+
     _idleTimer = null;
+    console.log('[lifecycle] ✅ Daemon 进程退出（下次 Skill 调用时会自动重新拉起）');
+    process.exit(0);
   }, _ttlMs);
 
-  // 极度关键：unref 后定时器不会阻止进程退出
-  _idleTimer.unref();
+  // 不用 unref — 定时器需要保持 Daemon 进程存活，直到超时或被续命
+  // （Daemon 是后台常驻进程，不像 Skill 脚本需要及时退出）
 }
 
 /**

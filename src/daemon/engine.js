@@ -24,6 +24,38 @@ puppeteer.use(StealthPlugin());
 
 // ── 单例 ──
 let _browser = null;
+let _shuttingDown = false;  // 防止 disconnected 回调与主动 terminate 重入
+let _shutdownCallback = null;  // 由 server 注入的关闭回调
+
+/**
+ * 注入 Daemon 关闭回调
+ *
+ * 当浏览器意外断开（如用户手动关闭窗口）时调用此回调，
+ * 让 Daemon 进程也一并退出。
+ *
+ * @param {() => void} cb
+ */
+export function onBrowserExit(cb) {
+  _shutdownCallback = cb;
+}
+
+/**
+ * 为浏览器实例注册 disconnected 监听
+ * 用户手动关闭浏览器窗口 → Puppeteer 触发 disconnected → Daemon 跟着退出
+ */
+function registerDisconnectHandler(browser) {
+  browser.on('disconnected', () => {
+    // 如果是主动 terminateBrowser() 触发的断开，跳过
+    if (_shuttingDown) return;
+
+    console.log('[engine] 🔌 浏览器连接断开（用户关闭了浏览器窗口？）');
+    _browser = null;
+
+    if (_shutdownCallback) {
+      _shutdownCallback();
+    }
+  });
+}
 
 // ── 浏览器候选路径 ──
 const BROWSER_CANDIDATES = {
@@ -208,6 +240,7 @@ export async function ensureBrowserForDaemon() {
         defaultViewport: null,
         protocolTimeout: config.browserProtocolTimeout,
       });
+      registerDisconnectHandler(_browser);
       console.log(`[engine] 已连接到端口 ${port} 的浏览器`);
       return _browser;
     } catch (err) {
@@ -240,6 +273,7 @@ export async function ensureBrowserForDaemon() {
   });
 
   const pid = _browser.process()?.pid;
+  registerDisconnectHandler(_browser);
   console.log(`[engine] 浏览器已启动 pid=${pid} port=${port} path=${executablePath}`);
 
   return _browser;
@@ -250,6 +284,8 @@ export async function ensureBrowserForDaemon() {
  */
 export async function terminateBrowser() {
   if (!_browser) return;
+
+  _shuttingDown = true;  // 标记主动关闭，防止 disconnected 回调重入
 
   try {
     const pid = _browser.process()?.pid;
@@ -263,5 +299,6 @@ export async function terminateBrowser() {
     } catch { /* ignore */ }
   } finally {
     _browser = null;
+    _shuttingDown = false;
   }
 }

@@ -126,6 +126,14 @@ const config = {
 
   /** 截图 / 图片输出目录 */
   outputDir: envStr('OUTPUT_DIR', resolve('output')),
+
+  // ── Daemon 配置 ──
+
+  /** Daemon HTTP 服务端口 */
+  daemonPort: envInt('DAEMON_PORT', 40225),
+
+  /** Daemon 闲置超时时间（ms），超时后自动终止浏览器释放资源 */
+  daemonTTL: envInt('DAEMON_TTL_MS', 30 * 60 * 1000),
 };
 
 export default config;

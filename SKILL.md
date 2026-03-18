@@ -7,7 +7,7 @@ description: 通过 Gemini 官网（gemini.google.com）执行问答与生图操
 
 ## 核心规则
 
-1. 使用 OpenClaw 内置浏览器，`profile="openclaw"`。
+1. 使用 Browser Daemon 托管的浏览器（Daemon 未运行时会自动后台拉起，无需手动启动）。
 2. 涉及生图关键词（如：生图、绘图、画一张、nano banana）时，优先用无头浏览器流程执行。
 3. 文本问答任务（如"问问Gemini xxx"）走 Gemini 文本提问链路。
 4. 默认模型：可用列表中最强模型，优先 `Gemini 3.1 Pro`。
@@ -76,7 +76,7 @@ Gemini 页面的操作按钮（`.send-button-container` 内）通过 `aria-label
    - `unknown` → 页面可能异常，做一次 snapshot 兜底排查。
 4. 累计耗时超过上限（文本 60s / 生图 120s）→ 走超时回退逻辑。
 
-**为什么这样做**：OpenClaw 通过 CDP（Chrome DevTools Protocol）WebSocket 控制浏览器。若长时间（>30s）无消息往来，网关/代理可能判定连接空闲并断开。分段短轮询保证 CDP 通道始终有心跳流量。
+**为什么这样做**：Skill 通过 CDP（Chrome DevTools Protocol）WebSocket 控制 Daemon 托管的浏览器。若长时间（>30s）无消息往来，网关/代理可能判定连接空闲并断开。分段短轮询保证 CDP 通道始终有心跳流量。
 
 ## 失败回退
 

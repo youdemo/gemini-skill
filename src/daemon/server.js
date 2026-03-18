@@ -15,12 +15,13 @@
  */
 import { createServer } from 'node:http';
 import { handleAcquire, handleStatus, handleRelease, handleHealth } from './handlers.js';
-import { setTTL, cancelHeartbeat } from './lifecycle.js';
-import { terminateBrowser } from './engine.js';
+import { setTTL, cancelHeartbeat, setServer } from './lifecycle.js';
+import { terminateBrowser, onBrowserExit } from './engine.js';
+import config from '../config.js';
 
-// ── 配置 ──
-const PORT = parseInt(process.env.DAEMON_PORT || '40225', 10);
-const TTL_MS = parseInt(process.env.DAEMON_TTL_MS || String(30 * 60 * 1000), 10);
+// ── 配置（统一从 config.js 读取） ──
+const PORT = config.daemonPort;
+const TTL_MS = config.daemonTTL;
 
 setTTL(TTL_MS);
 
@@ -49,8 +50,21 @@ const server = createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
+  // 注入 server 引用给 lifecycle，超时退出时优雅关闭 HTTP 服务
+  setServer(server);
+
+  // 浏览器被用户手动关闭时，Daemon 也跟着退出
+  onBrowserExit(() => {
+    console.log('[daemon] 🛑 浏览器已关闭，Daemon 跟随退出（下次 Skill 调用时会自动重新拉起）');
+    cancelHeartbeat();
+    server.close();
+    process.exit(0);
+  });
+
   console.log(`[daemon] 🚀 Browser Daemon 已启动 — http://127.0.0.1:${PORT}`);
   console.log(`[daemon] ⏱  闲置 TTL: ${(TTL_MS / 60000).toFixed(0)} 分钟`);
+  console.log(`[daemon] 🖥  无头模式: ${config.browserHeadless ? '是' : '否'}`);
+  console.log(`[daemon] 🔌 CDP 端口: ${config.browserDebugPort}`);
   console.log(`[daemon]    GET  /browser/acquire  — 获取/启动浏览器`);
   console.log(`[daemon]    GET  /browser/status   — 查询浏览器状态`);
   console.log(`[daemon]    POST /browser/release  — 销毁浏览器`);
