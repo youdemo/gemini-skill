@@ -179,26 +179,43 @@ function resolveUserDataDir() {
 
 // ── 启动参数 ──
 const BROWSER_ARGS = [
+  // 跳过首次运行的欢迎页 / 引导流程
   '--no-first-run',
+  // 不安装默认应用（Gmail、Drive 等 WebStore 推荐）
   '--disable-default-apps',
+  // 允许弹窗（防止 Gemini 内部弹窗被拦截）
   '--disable-popup-blocking',
+  // 禁用 GPU 硬件加速（无头 / 服务器环境下避免 GPU 相关崩溃）
   '--disable-gpu',
+  // 禁用软件光栅化后备（配合 --disable-gpu，彻底走 CPU 渲染）
   '--disable-software-rasterizer',
+  // 不使用 /dev/shm 共享内存（Docker / 低内存环境防 OOM）
   '--disable-dev-shm-usage',
+  // Linux 环境下关闭沙箱（Docker 内无特权时必需）
   ...(platform() === 'linux'
     ? ['--no-sandbox', '--disable-setuid-sandbox']
     : []),
+  // 禁止后台网络请求（如组件更新、安全浏览列表拉取），减少无关流量
   '--disable-background-networking',
+  // 禁止后台标签页的定时器节流，保证不在前台时脚本也能正常执行
   '--disable-background-timer-throttling',
+  // 禁止浏览器对被遮挡窗口降低优先级
   '--disable-backgrounding-occluded-windows',
+  // 禁止渲染进程在后台时被降级，保持页面持续活跃
   '--disable-renderer-backgrounding',
+  // 关闭内置翻译条，防止遮挡页面元素影响自动化操作
   '--disable-features=Translate',
+  // 跳过"设为默认浏览器"的弹窗检查
   '--no-default-browser-check',
+  // 禁用崩溃报告器，避免弹出崩溃上报对话框
   '--disable-crash-reporter',
+  // 隐藏"Chrome 未正确关闭"的恢复气泡提示
   '--hide-crash-restore-bubble',
+  // 标记为测试模式，跳过部分安全警告（如"不安全的命令行标志"横幅）
   '--test-type',
   // Windows Server 安全策略绕过：防止 Safe Browsing 验毒超时导致浏览器的下载被拦截
   '--safebrowsing-disable-download-protection',
+  // 禁用 Safe Browsing 扩展黑名单，防止 stealth 插件被标记拦截
   '--safebrowsing-disable-extension-blacklist',
 ];
 
